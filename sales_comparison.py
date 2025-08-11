@@ -394,13 +394,18 @@ def display_product_trend_table(filtered_summary, analysis_month=None):
     df = pd.DataFrame(table_data)
     
     # 200% 이상 변화율이 있는 행을 빨간색으로 강조하는 스타일 적용
-    def highlight_high_change_rate(row):
-        if row['정합성_체크']:
-            return ['background-color: #ffebee'] * len(row)  # 연한 빨간색 배경
-        return [''] * len(row)
+    # 정합성_체크 컬럼을 제외한 DataFrame 생성
+    display_columns = [col for col in df.columns if col != '정합성_체크']
+    df_display = df[display_columns].copy()
     
-    # 스타일을 먼저 적용한 후 정합성_체크 컬럼을 숨김
-    df_styled = df.style.apply(highlight_high_change_rate, axis=1).hide(['정합성_체크'])
+    # 스타일링을 위한 함수 (원본 DataFrame의 인덱스를 사용)
+    def highlight_high_change_rate(row_idx):
+        if df.iloc[row_idx]['정합성_체크']:
+            return ['background-color: #ffebee'] * len(df_display.columns)  # 연한 빨간색 배경
+        return [''] * len(df_display.columns)
+    
+    # 스타일 적용
+    df_styled = df_display.style.apply(highlight_high_change_rate, axis=0)
     
     st.dataframe(df_styled, use_container_width=True)
     

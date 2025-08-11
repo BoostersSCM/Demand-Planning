@@ -353,6 +353,8 @@ def display_product_trend_table(filtered_summary, analysis_month=None):
     
     # 모든 제품 데이터를 하나의 테이블로 통합
     table_data = []
+    high_change_rate_products = []  # 200% 이상 변화율 제품 추적
+    
     for route, products in filtered_summary.items():
         for product, info in products.items():
             trend_icon = "📈" if info['trend'] == '상승' else "📉" if info['trend'] == '하락' else "➡️"
@@ -361,11 +363,19 @@ def display_product_trend_table(filtered_summary, analysis_month=None):
             original_change_rate = info.get('original_change_rate', info['change_rate'])
             corrected_change_rate = info['change_rate']
             
+            # 200% 이상 변화율 체크
+            is_high_change_rate = abs(corrected_change_rate) >= 200
+            
             # 보정이 적용된 경우 표시 (소수 1자리까지)
             if abs(original_change_rate - corrected_change_rate) > 0.1:
                 change_rate_display = f"{round(corrected_change_rate, 1)}% (보정됨)"
             else:
                 change_rate_display = f"{round(corrected_change_rate, 1)}%"
+            
+            # 200% 이상인 경우 빨간색으로 표시
+            if is_high_change_rate:
+                change_rate_display = f"🔴 **{change_rate_display}**"
+                high_change_rate_products.append(f"{route} - {product}")
             
             # 동적 분석 여부 확인
             is_weighted = info.get('weighted_analysis', False)
@@ -381,6 +391,13 @@ def display_product_trend_table(filtered_summary, analysis_month=None):
                 '변화율': change_rate_display,
                 '6개월 예측(월평균)': f"{int(info['total_forecast']):,}개"
             })
+    
+    # 200% 이상 변화율 제품이 있는 경우 경고 표시
+    if high_change_rate_products:
+        st.warning("⚠️ **정합성 유의**: 다음 제품들의 변화율이 200% 이상으로 급격한 변화를 보입니다. 데이터 정합성을 확인해주세요.")
+        for product in high_change_rate_products:
+            st.write(f"• {product}")
+        st.markdown("---")
     
     df = pd.DataFrame(table_data)
     st.dataframe(df, use_container_width=True)
@@ -401,199 +418,361 @@ def display_monthly_forecast_chart(filtered_summary, filtered_sales, past_months
         st.warning("표시할 데이터가 없습니다.")
         return
     
-    # 경로와 제품 선택 옵션 생성
-    route_options = list(filtered_summary.keys())
-    product_options = []
-    for route, products in filtered_summary.items():
-        for product in products.keys():
-            product_options.append(f"{route} - {product}")
-    
-    # 전체 보기 옵션 추가
-    view_options = ["전체"] + product_options
-    selected_view = st.selectbox(
-        "보고 싶은 경로/제품을 선택하세요:",
-        view_options,
-        index=0
+    # 보기 방식 선택
+    view_type = st.radio(
+        "보기 방식 선택:",
+        ["경로별 전체", "제품별 개별", "제품별 경로 합계"],
+        horizontal=True,
+        help="경로별 전체: 각 경로의 모든 제품 합계, 제품별 개별: 특정 제품의 개별 추이, 제품별 경로 합계: 한 제품의 모든 경로 합계"
     )
     
-    # 월별 예측 데이터 수집
-    monthly_data = {}
-    months = ['2025년 8월', '2025년 9월', '2025년 10월', '2025년 11월', '2025년 12월', '2026년 1월']
-    
-    if selected_view == "전체":
-        # 전체 데이터 - 경로별로 구분하여 표시
-        fig = go.Figure()
-        
-        for route, products in filtered_summary.items():
-            # 과거 판매 데이터 수집
-            route_sales = filtered_sales[filtered_sales['경로'] == route]
-            past_monthly_data = {}
-            
-            # 과거 6개월 판매 데이터
-            for month in past_months:
-                month_sales = route_sales[route_sales['월'] == month]['판매수량'].sum()
-                past_monthly_data[month] = month_sales
-            
-            # 예측 데이터 수집
-            route_monthly_data = {}
-            for product, info in products.items():
-                monthly_forecasts = info['monthly_forecasts']
-                for i, month in enumerate(months):
-                    if month not in route_monthly_data:
-                        route_monthly_data[month] = 0
-                    route_monthly_data[month] += int(monthly_forecasts[i]) if i < len(monthly_forecasts) else 0
-            
-            # 과거 데이터와 예측 데이터 결합
-            all_months = list(past_monthly_data.keys()) + list(route_monthly_data.keys())
-            all_values = list(past_monthly_data.values()) + list(route_monthly_data.values())
-            
-            # 과거 데이터 (실선)
-            fig.add_trace(go.Scatter(
-                x=list(past_monthly_data.keys()),
-                y=list(past_monthly_data.values()),
-                mode='lines+markers',
-                name=f'{route} (과거)',
-                line=dict(width=3, color='#1f77b4'),
-                marker=dict(size=8)
-            ))
-            
-            # 예측 데이터 (점선)
-            fig.add_trace(go.Scatter(
-                x=list(route_monthly_data.keys()),
-                y=list(route_monthly_data.values()),
-                mode='lines+markers',
-                name=f'{route} (예측)',
-                line=dict(width=3, color='#1f77b4', dash='dash'),
-                marker=dict(size=8, symbol='diamond')
-            ))
-        
-        fig.update_layout(
-            title=f'판매 추이 및 향후 6개월 예측 (경로별)',
-            xaxis_title='월',
-            yaxis_title='판매/예측 수량 (개)',
-            hovermode='x unified',
-            showlegend=True
+    if view_type == "경로별 전체":
+        # 경로별 전체 보기
+        route_options = list(filtered_summary.keys())
+        selected_route = st.selectbox(
+            "보고 싶은 경로를 선택하세요:",
+            ["전체 경로"] + route_options,
+            index=0
         )
         
-        st.plotly_chart(fig, use_container_width=True)
+        if selected_route == "전체 경로":
+            selected_routes = route_options
+        else:
+            selected_routes = [selected_route]
+            
+        display_route_summary_chart(filtered_summary, filtered_sales, past_months, selected_routes)
         
-        # 경로별 월별 예측 수량 요약 테이블
-        st.markdown("**경로별 월별 예측 수량 요약:**")
-        summary_data = []
+    elif view_type == "제품별 개별":
+        # 제품별 개별 보기
+        product_options = []
         for route, products in filtered_summary.items():
-            route_monthly_data = {}
-            for product, info in products.items():
-                monthly_forecasts = info['monthly_forecasts']
-                for i, month in enumerate(months):
-                    if month not in route_monthly_data:
-                        route_monthly_data[month] = 0
-                    route_monthly_data[month] += int(monthly_forecasts[i]) if i < len(monthly_forecasts) else 0
+            for product in products.keys():
+                product_options.append(f"{route} - {product}")
+        
+        selected_product = st.selectbox(
+            "보고 싶은 제품을 선택하세요:",
+            product_options,
+            index=0
+        )
+        
+        selected_route, selected_product_name = selected_product.split(" - ", 1)
+        display_individual_product_chart(filtered_summary, filtered_sales, past_months, selected_route, selected_product_name)
+        
+    else:  # 제품별 경로 합계
+        # 제품별 경로 합계 보기
+        all_products = set()
+        for route, products in filtered_summary.items():
+            for product in products.keys():
+                all_products.add(product)
+        
+        selected_product = st.selectbox(
+            "보고 싶은 제품을 선택하세요 (모든 경로 합계):",
+            sorted(list(all_products)),
+            index=0
+        )
+        
+        display_product_route_summary_chart(filtered_summary, filtered_sales, past_months, selected_product)
+
+def display_route_summary_chart(filtered_summary, filtered_sales, past_months, selected_routes):
+    """경로별 전체 제품 합계 차트 표시"""
+    months = ['2025년 8월', '2025년 9월', '2025년 10월', '2025년 11월', '2025년 12월', '2026년 1월']
+    
+    fig = go.Figure()
+    
+    for route in selected_routes:
+        if route not in filtered_summary:
+            continue
             
-            for month, quantity in route_monthly_data.items():
-                summary_data.append({
-                    '경로': route,
-                    '월': month,
-                    '예측 수량': f"{int(quantity):,}개"
-                })
+        # 과거 판매 데이터 수집
+        route_sales = filtered_sales[filtered_sales['경로'] == route]
+        past_monthly_data = {}
         
-        summary_df = pd.DataFrame(summary_data)
-        st.dataframe(summary_df, use_container_width=True)
+        # 과거 6개월 판매 데이터
+        for month in past_months:
+            month_sales = route_sales[route_sales['월'] == month]['판매수량'].sum()
+            past_monthly_data[month] = month_sales
         
-    else:
-        # 선택된 특정 제품
-        selected_route, selected_product = selected_view.split(" - ", 1)
-        if selected_route in filtered_summary and selected_product in filtered_summary[selected_route]:
-            info = filtered_summary[selected_route][selected_product]
+        # 예측 데이터 수집
+        route_monthly_data = {}
+        for product, info in filtered_summary[route].items():
             monthly_forecasts = info['monthly_forecasts']
-            
-            # 과거 판매 데이터 수집
-            product_sales = filtered_sales[
-                (filtered_sales['경로'] == selected_route) & 
+            for i, month in enumerate(months):
+                if month not in route_monthly_data:
+                    route_monthly_data[month] = 0
+                route_monthly_data[month] += int(monthly_forecasts[i]) if i < len(monthly_forecasts) else 0
+        
+        # 과거 데이터 (실선)
+        fig.add_trace(go.Scatter(
+            x=list(past_monthly_data.keys()),
+            y=list(past_monthly_data.values()),
+            mode='lines+markers',
+            name=f'{route} (과거)',
+            line=dict(width=3),
+            marker=dict(size=8)
+        ))
+        
+        # 예측 데이터 (점선)
+        fig.add_trace(go.Scatter(
+            x=list(route_monthly_data.keys()),
+            y=list(route_monthly_data.values()),
+            mode='lines+markers',
+            name=f'{route} (예측)',
+            line=dict(width=3, dash='dash'),
+            marker=dict(size=8, symbol='diamond')
+        ))
+    
+    fig.update_layout(
+        title=f'경로별 판매 추이 및 향후 6개월 예측',
+        xaxis_title='월',
+        yaxis_title='판매/예측 수량 (개)',
+        hovermode='x unified',
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # 경로별 월별 예측 수량 요약 테이블
+    st.markdown("**경로별 월별 예측 수량 요약:**")
+    summary_data = []
+    for route in selected_routes:
+        if route not in filtered_summary:
+            continue
+        route_monthly_data = {}
+        for product, info in filtered_summary[route].items():
+            monthly_forecasts = info['monthly_forecasts']
+            for i, month in enumerate(months):
+                if month not in route_monthly_data:
+                    route_monthly_data[month] = 0
+                route_monthly_data[month] += int(monthly_forecasts[i]) if i < len(monthly_forecasts) else 0
+        
+        for month, quantity in route_monthly_data.items():
+            summary_data.append({
+                '경로': route,
+                '월': month,
+                '예측 수량': f"{int(quantity):,}개"
+            })
+    
+    summary_df = pd.DataFrame(summary_data)
+    st.dataframe(summary_df, use_container_width=True)
+
+def display_individual_product_chart(filtered_summary, filtered_sales, past_months, selected_route, selected_product):
+    """개별 제품 차트 표시"""
+    months = ['2025년 8월', '2025년 9월', '2025년 10월', '2025년 11월', '2025년 12월', '2026년 1월']
+    
+    if selected_route not in filtered_summary or selected_product not in filtered_summary[selected_route]:
+        st.warning("선택된 제품에 대한 데이터가 없습니다.")
+        return
+    
+    info = filtered_summary[selected_route][selected_product]
+    monthly_forecasts = info['monthly_forecasts']
+    
+    # 과거 판매 데이터 수집
+    product_sales = filtered_sales[
+        (filtered_sales['경로'] == selected_route) & 
+        (filtered_sales['제품명'] == selected_product)
+    ]
+    past_monthly_data = {}
+    
+    # 과거 6개월 판매 데이터
+    for month in past_months:
+        month_sales = product_sales[product_sales['월'] == month]['판매수량'].sum()
+        past_monthly_data[month] = month_sales
+    
+    # 예측 데이터
+    forecast_monthly_data = {}
+    for i, month in enumerate(months):
+        forecast_monthly_data[month] = int(monthly_forecasts[i]) if i < len(monthly_forecasts) else 0
+    
+    # 그래프 생성
+    fig = go.Figure()
+    
+    # 추세에 따른 색상 설정
+    trend = info.get('trend', '안정')
+    if trend == '상승':
+        line_color = '#2E8B57'  # 녹색
+    elif trend == '하락':
+        line_color = '#DC143C'  # 빨간색
+    else:
+        line_color = '#1f77b4'  # 파란색
+    
+    # 과거 데이터 (실선)
+    fig.add_trace(go.Scatter(
+        x=list(past_monthly_data.keys()),
+        y=list(past_monthly_data.values()),
+        mode='lines+markers',
+        name=f'{selected_product} (과거)',
+        line=dict(color=line_color, width=3),
+        marker=dict(size=8)
+    ))
+    
+    # 예측 데이터 (점선)
+    fig.add_trace(go.Scatter(
+        x=list(forecast_monthly_data.keys()),
+        y=list(forecast_monthly_data.values()),
+        mode='lines+markers',
+        name=f'{selected_product} (예측)',
+        line=dict(color=line_color, width=3, dash='dash'),
+        marker=dict(size=8, symbol='diamond')
+    ))
+    
+    fig.update_layout(
+        title=f'제품별 판매 추이 및 향후 6개월 예측 ({selected_route} - {selected_product})',
+        xaxis_title='월',
+        yaxis_title='판매/예측 수량 (개)',
+        hovermode='x unified',
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # 제품별 상세 정보 표시
+    st.markdown(f"**제품 상세 정보:**")
+    st.write(f"- **경로**: {selected_route}")
+    st.write(f"- **제품명**: {selected_product}")
+    st.write(f"- **추세**: {trend}")
+    st.write(f"- **변화율**: {info.get('change_rate', 'N/A')}%")
+    st.write(f"- **월 평균 판매량**: {int(info.get('current_sales', 0)):,}개")
+    st.write(f"- **6개월 예측(월평균)**: {int(info.get('total_forecast', 0)):,}개")
+    
+    # 과거 판매량과 예측 수량 요약 테이블
+    st.markdown("**과거 판매량 및 예측 수량 요약:**")
+    
+    # 과거 데이터 테이블
+    past_summary_df = pd.DataFrame([
+        {'월': month, '실제 판매량': f"{int(quantity):,}개"}
+        for month, quantity in past_monthly_data.items()
+    ])
+    st.markdown("**과거 판매량:**")
+    st.dataframe(past_summary_df, use_container_width=True)
+    
+    # 예측 데이터 테이블
+    forecast_summary_df = pd.DataFrame([
+        {'월': month, '예측 수량': f"{int(quantity):,}개"}
+        for month, quantity in forecast_monthly_data.items()
+    ])
+    st.markdown("**향후 예측 수량:**")
+    st.dataframe(forecast_summary_df, use_container_width=True)
+
+def display_product_route_summary_chart(filtered_summary, filtered_sales, past_months, selected_product):
+    """제품별 모든 경로 합계 차트 표시"""
+    months = ['2025년 8월', '2025년 9월', '2025년 10월', '2025년 11월', '2025년 12월', '2026년 1월']
+    
+    # 선택된 제품이 있는 모든 경로 찾기
+    product_routes = []
+    for route, products in filtered_summary.items():
+        if selected_product in products:
+            product_routes.append(route)
+    
+    if not product_routes:
+        st.warning(f"'{selected_product}' 제품에 대한 데이터가 없습니다.")
+        return
+    
+    # 과거 판매 데이터 수집 (모든 경로 합계)
+    past_monthly_data = {}
+    for month in past_months:
+        month_sales = 0
+        for route in product_routes:
+            route_sales = filtered_sales[
+                (filtered_sales['경로'] == route) & 
                 (filtered_sales['제품명'] == selected_product)
             ]
-            past_monthly_data = {}
-            
-            # 과거 6개월 판매 데이터
-            for month in past_months:
-                month_sales = product_sales[product_sales['월'] == month]['판매수량'].sum()
-                past_monthly_data[month] = month_sales
-            
-            # 예측 데이터
-            forecast_monthly_data = {}
+            month_sales += route_sales[route_sales['월'] == month]['판매수량'].sum()
+        past_monthly_data[month] = month_sales
+    
+    # 예측 데이터 수집 (모든 경로 합계)
+    forecast_monthly_data = {}
+    for i, month in enumerate(months):
+        month_forecast = 0
+        for route in product_routes:
+            if route in filtered_summary and selected_product in filtered_summary[route]:
+                monthly_forecasts = filtered_summary[route][selected_product]['monthly_forecasts']
+                month_forecast += int(monthly_forecasts[i]) if i < len(monthly_forecasts) else 0
+        forecast_monthly_data[month] = month_forecast
+    
+    # 그래프 생성
+    fig = go.Figure()
+    
+    # 과거 데이터 (실선)
+    fig.add_trace(go.Scatter(
+        x=list(past_monthly_data.keys()),
+        y=list(past_monthly_data.values()),
+        mode='lines+markers',
+        name=f'{selected_product} (과거 - 모든 경로 합계)',
+        line=dict(color='#1f77b4', width=3),
+        marker=dict(size=8)
+    ))
+    
+    # 예측 데이터 (점선)
+    fig.add_trace(go.Scatter(
+        x=list(forecast_monthly_data.keys()),
+        y=list(forecast_monthly_data.values()),
+        mode='lines+markers',
+        name=f'{selected_product} (예측 - 모든 경로 합계)',
+        line=dict(color='#1f77b4', width=3, dash='dash'),
+        marker=dict(size=8, symbol='diamond')
+    ))
+    
+    fig.update_layout(
+        title=f'제품별 모든 경로 합계 판매 추이 및 향후 6개월 예측 ({selected_product})',
+        xaxis_title='월',
+        yaxis_title='판매/예측 수량 (개)',
+        hovermode='x unified',
+        showlegend=True
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # 경로별 상세 정보 표시
+    st.markdown(f"**경로별 상세 정보:**")
+    route_info_data = []
+    for route in product_routes:
+        if route in filtered_summary and selected_product in filtered_summary[route]:
+            info = filtered_summary[route][selected_product]
+            route_info_data.append({
+                '경로': route,
+                '추세': info.get('trend', 'N/A'),
+                '변화율': f"{info.get('change_rate', 0):.1f}%",
+                '월 평균 판매량': f"{int(info.get('current_sales', 0)):,}개",
+                '6개월 예측(월평균)': f"{int(info.get('total_forecast', 0)):,}개"
+            })
+    
+    route_info_df = pd.DataFrame(route_info_data)
+    st.dataframe(route_info_df, use_container_width=True)
+    
+    # 과거 판매량과 예측 수량 요약 테이블
+    st.markdown("**과거 판매량 및 예측 수량 요약 (모든 경로 합계):**")
+    
+    # 과거 데이터 테이블
+    past_summary_df = pd.DataFrame([
+        {'월': month, '실제 판매량': f"{int(quantity):,}개"}
+        for month, quantity in past_monthly_data.items()
+    ])
+    st.markdown("**과거 판매량:**")
+    st.dataframe(past_summary_df, use_container_width=True)
+    
+    # 예측 데이터 테이블
+    forecast_summary_df = pd.DataFrame([
+        {'월': month, '예측 수량': f"{int(quantity):,}개"}
+        for month, quantity in forecast_monthly_data.items()
+    ])
+    st.markdown("**향후 예측 수량:**")
+    st.dataframe(forecast_summary_df, use_container_width=True)
+    
+    # 경로별 월별 예측 수량 상세 테이블
+    st.markdown("**경로별 월별 예측 수량 상세:**")
+    detailed_data = []
+    for route in product_routes:
+        if route in filtered_summary and selected_product in filtered_summary[route]:
+            monthly_forecasts = filtered_summary[route][selected_product]['monthly_forecasts']
             for i, month in enumerate(months):
-                forecast_monthly_data[month] = int(monthly_forecasts[i]) if i < len(monthly_forecasts) else 0
-            
-            # 그래프 생성
-            fig = go.Figure()
-            
-            # 추세에 따른 색상 설정
-            trend = info.get('trend', '안정')
-            if trend == '상승':
-                line_color = '#2E8B57'  # 녹색
-            elif trend == '하락':
-                line_color = '#DC143C'  # 빨간색
-            else:
-                line_color = '#1f77b4'  # 파란색
-            
-            # 과거 데이터 (실선)
-            fig.add_trace(go.Scatter(
-                x=list(past_monthly_data.keys()),
-                y=list(past_monthly_data.values()),
-                mode='lines+markers',
-                name=f'{selected_product} (과거)',
-                line=dict(color=line_color, width=3),
-                marker=dict(size=8)
-            ))
-            
-            # 예측 데이터 (점선)
-            fig.add_trace(go.Scatter(
-                x=list(forecast_monthly_data.keys()),
-                y=list(forecast_monthly_data.values()),
-                mode='lines+markers',
-                name=f'{selected_product} (예측)',
-                line=dict(color=line_color, width=3, dash='dash'),
-                marker=dict(size=8, symbol='diamond')
-            ))
-            
-            fig.update_layout(
-                title=f'판매 추이 및 향후 6개월 예측 ({selected_view})',
-                xaxis_title='월',
-                yaxis_title='판매/예측 수량 (개)',
-                hovermode='x unified',
-                showlegend=True
-            )
-            
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # 제품별 상세 정보 표시
-            st.markdown(f"**제품 상세 정보:**")
-            st.write(f"- **경로**: {selected_route}")
-            st.write(f"- **제품명**: {selected_product}")
-            st.write(f"- **추세**: {trend}")
-            st.write(f"- **변화율**: {info.get('change_rate', 'N/A')}%")
-            st.write(f"- **월 평균 판매량**: {int(info.get('current_sales', 0)):,}개")
-            st.write(f"- **6개월 예측(월평균)**: {int(info.get('total_forecast', 0)):,}개")
-            
-            # 과거 판매량과 예측 수량 요약 테이블
-            st.markdown("**과거 판매량 및 예측 수량 요약:**")
-            
-            # 과거 데이터 테이블
-            past_summary_df = pd.DataFrame([
-                {'월': month, '실제 판매량': f"{int(quantity):,}개"}
-                for month, quantity in past_monthly_data.items()
-            ])
-            st.markdown("**과거 판매량:**")
-            st.dataframe(past_summary_df, use_container_width=True)
-            
-            # 예측 데이터 테이블
-            forecast_summary_df = pd.DataFrame([
-                {'월': month, '예측 수량': f"{int(quantity):,}개"}
-                for month, quantity in forecast_monthly_data.items()
-            ])
-            st.markdown("**향후 예측 수량:**")
-            st.dataframe(forecast_summary_df, use_container_width=True)
-        else:
-            st.warning("선택된 제품에 대한 데이터가 없습니다.")
+                detailed_data.append({
+                    '경로': route,
+                    '월': month,
+                    '예측 수량': f"{int(monthly_forecasts[i]) if i < len(monthly_forecasts) else 0:,}개"
+                })
+    
+    detailed_df = pd.DataFrame(detailed_data)
+    st.dataframe(detailed_df, use_container_width=True)
 
 def create_filtered_forecast_dataframe(filtered_summary):
     """필터링된 예측 결과를 데이터프레임으로 변환"""

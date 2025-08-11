@@ -353,7 +353,6 @@ def display_product_trend_table(filtered_summary, analysis_month=None):
     
     # 모든 제품 데이터를 하나의 테이블로 통합
     table_data = []
-    high_change_rate_products = []  # 200% 이상 변화율 제품 추적
     
     for route, products in filtered_summary.items():
         for product, info in products.items():
@@ -372,10 +371,9 @@ def display_product_trend_table(filtered_summary, analysis_month=None):
             else:
                 change_rate_display = f"{round(corrected_change_rate, 1)}%"
             
-            # 200% 이상인 경우 빨간색으로 표시
+            # 200% 이상인 경우 "정합성 유의" 표시 추가
             if is_high_change_rate:
-                change_rate_display = f"🔴 **{change_rate_display}**"
-                high_change_rate_products.append(f"{route} - {product}")
+                change_rate_display = f"{change_rate_display} ⚠️정합성 유의"
             
             # 동적 분석 여부 확인
             is_weighted = info.get('weighted_analysis', False)
@@ -389,18 +387,22 @@ def display_product_trend_table(filtered_summary, analysis_month=None):
                 '월 평균 판매량': f"{int(info['current_sales']):,}개",
                 '추세': f"{trend_icon} {info['trend']}",
                 '변화율': change_rate_display,
-                '6개월 예측(월평균)': f"{int(info['total_forecast']):,}개"
+                '6개월 예측(월평균)': f"{int(info['total_forecast']):,}개",
+                '정합성_체크': is_high_change_rate  # 스타일링을 위한 숨겨진 컬럼
             })
     
-    # 200% 이상 변화율 제품이 있는 경우 경고 표시
-    if high_change_rate_products:
-        st.warning("⚠️ **정합성 유의**: 다음 제품들의 변화율이 200% 이상으로 급격한 변화를 보입니다. 데이터 정합성을 확인해주세요.")
-        for product in high_change_rate_products:
-            st.write(f"• {product}")
-        st.markdown("---")
-    
     df = pd.DataFrame(table_data)
-    st.dataframe(df, use_container_width=True)
+    
+    # 200% 이상 변화율이 있는 행을 빨간색으로 강조하는 스타일 적용
+    def highlight_high_change_rate(row):
+        if row['정합성_체크']:
+            return ['background-color: #ffebee'] * len(row)  # 연한 빨간색 배경
+        return [''] * len(row)
+    
+    # 정합성_체크 컬럼 제거하고 스타일 적용
+    df_styled = df.drop('정합성_체크', axis=1).style.apply(highlight_high_change_rate, axis=1)
+    
+    st.dataframe(df_styled, use_container_width=True)
     
     # 동적 분석 통계
     dynamic_count = sum(1 for item in table_data if item['분석방식'] == '동적')

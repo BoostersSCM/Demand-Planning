@@ -399,8 +399,8 @@ def display_product_trend_table(filtered_summary, analysis_month=None):
             return ['background-color: #ffebee'] * len(row)  # 연한 빨간색 배경
         return [''] * len(row)
     
-    # 정합성_체크 컬럼 제거하고 스타일 적용
-    df_styled = df.drop('정합성_체크', axis=1).style.apply(highlight_high_change_rate, axis=1)
+    # 스타일을 먼저 적용한 후 정합성_체크 컬럼을 숨김
+    df_styled = df.style.apply(highlight_high_change_rate, axis=1).hide(['정합성_체크'])
     
     st.dataframe(df_styled, use_container_width=True)
     

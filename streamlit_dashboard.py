@@ -55,23 +55,54 @@ prediction_mode = st.sidebar.radio(
     index=0
 )
 
+# 동적 월 목록 생성 함수
+def generate_month_options():
+    """현재 날짜를 기준으로 미래 3개월과 과거 6개월을 동적으로 생성"""
+    from datetime import datetime, timedelta
+    import calendar
+    
+    current_date = datetime.now()
+    current_year = current_date.year
+    current_month = current_date.month
+    
+    # 미래 3개월 생성 (영어 형식)
+    future_months = []
+    for i in range(1, 4):
+        future_date = current_date + timedelta(days=32*i)  # 다음달로 이동
+        future_date = future_date.replace(day=1)  # 1일로 설정
+        year_str = str(future_date.year)[-2:]  # 년도 뒤 2자리
+        month_str = calendar.month_abbr[future_date.month]  # 월 약어
+        future_months.append(f"{year_str}-{month_str}")
+    
+    # 과거 6개월 생성 (한국어 형식)
+    past_months = []
+    for i in range(6, 0, -1):  # 6개월 전부터 1개월 전까지
+        past_date = current_date - timedelta(days=32*i)  # 이전달로 이동
+        past_date = past_date.replace(day=1)  # 1일로 설정
+        past_months.append(f"{past_date.year}년 {past_date.month}월")
+    
+    return future_months, past_months
+
+# 동적 월 목록 생성
+future_months, past_months = generate_month_options()
+
 # 모드에 따른 월 선택 옵션
 if prediction_mode == "미래 예측":
     selected_month = st.sidebar.selectbox(
         "예측 대상 월",
-        ["25-Aug", "25-Sep", "25-Oct"],
+        future_months,
         index=0
     )
 elif prediction_mode == "과거 예측 vs 실제값 비교(KPI 기반)":
     selected_month = st.sidebar.selectbox(
         "비교 대상 월",
-        ["2025년 7월", "2025년 6월", "2025년 5월"],
+        past_months,
         index=0
     )
 else:  # 과거 예측 vs 실제 비교(판매데이터 기반)
     selected_month = st.sidebar.selectbox(
         "분석 기준 월",
-        ["2025년 7월", "2025년 6월", "2025년 5월"],
+        past_months,
         index=0
     )
 
